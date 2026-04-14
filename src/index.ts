@@ -8,7 +8,6 @@ import { dirname, join } from "node:path";
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { BookStackClient, BookStackConfig } from "./bookstack-client.js";
@@ -785,14 +784,10 @@ async function startStdio(config: BookStackConfig): Promise<void> {
   console.error("BookStack MCP server running on stdio");
 }
 
-type AnyTransport = StreamableHTTPServerTransport | SSEServerTransport;
-
 async function startHttp(config: BookStackConfig): Promise<void> {
   const port = parseInt(process.env.MCP_HTTP_PORT ?? "8080", 10);
   const host = process.env.MCP_HTTP_HOST ?? "127.0.0.1";
   const mcpPath = process.env.MCP_HTTP_PATH ?? "/mcp";
-  const ssePath = process.env.MCP_SSE_PATH ?? "/sse";
-  const messagesPath = process.env.MCP_MESSAGES_PATH ?? "/messages";
 
   // DNS rebinding protection: validate the Host header against an allowlist.
   // Loopback binds default to localhost-only; other binds require an explicit
@@ -815,7 +810,7 @@ async function startHttp(config: BookStackConfig): Promise<void> {
     return allowedHosts.includes(hostname) ? null : `Host '${hostname}' not allowed`;
   };
 
-  const transports: Record<string, AnyTransport> = {};
+  const transports: Record<string, StreamableHTTPServerTransport> = {};
 
   const readJsonBody = (req: IncomingMessage): Promise<unknown> =>
     new Promise((resolve, reject) => {
@@ -855,8 +850,8 @@ async function startHttp(config: BookStackConfig): Promise<void> {
           parsedBody = await readJsonBody(req);
         }
 
-        if (sessionId && transports[sessionId] instanceof StreamableHTTPServerTransport) {
-          transport = transports[sessionId] as StreamableHTTPServerTransport;
+        if (sessionId && transports[sessionId]) {
+          transport = transports[sessionId];
         } else if (!sessionId && req.method === "POST" && isInitializeRequest(parsedBody)) {
           transport = new StreamableHTTPServerTransport({
             sessionIdGenerator: () => randomUUID(),
@@ -883,35 +878,6 @@ async function startHttp(config: BookStackConfig): Promise<void> {
         return;
       }
 
-      // Legacy SSE transport: GET /sse establishes the stream
-      if (pathname === ssePath && req.method === "GET") {
-        const transport = new SSEServerTransport(messagesPath, res);
-        transports[transport.sessionId] = transport;
-        res.on("close", () => {
-          delete transports[transport.sessionId];
-        });
-        const server = buildServer(config);
-        await server.connect(transport);
-        return;
-      }
-
-      // Legacy SSE transport: POST /messages?sessionId=...
-      if (pathname === messagesPath && req.method === "POST") {
-        const sid = url.searchParams.get("sessionId") ?? "";
-        const existing = transports[sid];
-        if (!(existing instanceof SSEServerTransport)) {
-          sendJson(res, 400, {
-            jsonrpc: "2.0",
-            error: { code: -32000, message: "Bad Request: Unknown or wrong-protocol session" },
-            id: null
-          });
-          return;
-        }
-        const parsedBody = await readJsonBody(req);
-        await existing.handlePostMessage(req, res, parsedBody);
-        return;
-      }
-
       // Health check
       if (pathname === "/health" || pathname === "/") {
         sendJson(res, 200, { status: "ok", server: "bookstack-mcp", transport: "http" });
@@ -933,8 +899,7 @@ async function startHttp(config: BookStackConfig): Promise<void> {
 
   httpServer.listen(port, host, () => {
     console.error(`BookStack MCP server listening on http://${host}:${port}`);
-    console.error(`  Streamable HTTP: ${mcpPath}  (recommended)`);
-    console.error(`  Legacy SSE:      GET ${ssePath}, POST ${messagesPath}?sessionId=...`);
+    console.error(`  Streamable HTTP: ${mcpPath}`);
     console.error(
       allowedHosts
         ? `  Allowed Host headers: ${allowedHosts.join(", ")}`
