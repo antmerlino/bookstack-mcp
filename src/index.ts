@@ -637,6 +637,81 @@ function registerTools(server: McpServer, client: BookStackClient, config: BookS
     );
 
     writeTool(
+      "create_book",
+      {
+        title: "Create Book",
+        description: "Create a new book in BookStack",
+        inputSchema: {
+          name: z.string().describe("Book name"),
+          description: z.string().optional().describe("Plain-text description of the book"),
+          description_html: z.string().optional().describe("HTML description of the book (alternative to description)"),
+          tags: z.array(z.object({
+            name: z.string(),
+            value: z.string()
+          }).strict()).optional().describe("Tags for the book")
+        }
+      },
+      async (args) => {
+        const book = await client.createBook({
+          name: args.name,
+          description: args.description,
+          description_html: args.description_html,
+          tags: args.tags as any
+        });
+        return {
+          content: [{ type: "text", text: JSON.stringify(book, null, 2) }]
+        };
+      }
+    );
+
+    writeTool(
+      "update_book",
+      {
+        title: "Update Book",
+        description: "Update an existing book",
+        inputSchema: {
+          id: z.coerce.number().min(1).describe("Book ID"),
+          name: z.string().optional().describe("New book name"),
+          description: z.string().optional().describe("New plain-text description"),
+          description_html: z.string().optional().describe("New HTML description (alternative to description)"),
+          tags: z.array(z.object({
+            name: z.string(),
+            value: z.string()
+          }).strict()).optional().describe("Tags for the book")
+        }
+      },
+      async (args) => {
+        const book = await client.updateBook(args.id, {
+          name: args.name,
+          description: args.description,
+          description_html: args.description_html,
+          tags: args.tags as any
+        });
+        return {
+          content: [{ type: "text", text: JSON.stringify(book, null, 2) }]
+        };
+      }
+    );
+
+    writeTool(
+      "delete_book",
+      {
+        title: "Delete Book",
+        description: "Delete a book and all its contents (chapters and pages). This is irreversible.",
+        inputSchema: {
+          id: z.coerce.number().min(1).describe("Book ID")
+        },
+        annotations: { destructiveHint: true }
+      },
+      async (args) => {
+        const result = await client.deleteBook(args.id);
+        return {
+          content: [{ type: "text", text: JSON.stringify(result, null, 2) }]
+        };
+      }
+    );
+
+    writeTool(
       "create_shelf",
       {
         title: "Create Shelf",
